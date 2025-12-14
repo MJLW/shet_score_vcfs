@@ -199,12 +199,17 @@ fn read_shet(path: &str) -> Result<Vec<GeneSHET>, Box<dyn Error>> {
     Ok(rows)
 }
 
-fn get_tag_value_from_info<'r>(info: &'r Info, header: &'r vcf::Header, tag: &str) -> Value<'r> {
-    return info
-        .get(header, tag)
-        .expect(format!("Could not find tag INFO/{}", tag).as_str())
-        .expect(format!("Could not find value for tag INFO/{}", tag).as_str())
-        .expect(format!("Could not find value for tag INFO/{}", tag).as_str());
+fn get_tag_value_from_info<'r>(
+    info: &'r Info,
+    header: &'r vcf::Header,
+    tag: &str,
+) -> Option<Value<'r>> {
+    let tag_value = info.get(header, tag);
+
+    return match tag_value {
+        Some(Ok(Some(tag))) => Some(tag),
+        _ => None,
+    };
 }
 
 fn get_gt(record: &vcf::Record, header: &vcf::Header) -> Result<Genotype, Box<dyn Error>> {
@@ -243,7 +248,7 @@ fn write_output(path: &str, output_row: Vec<Output>) -> Result<(), Box<dyn Error
 
 fn main() -> Result<(), Box<dyn Error>> {
     const AF_TAG: &str = "MAX_AF";
-    const AF_MIN_VALUE: f32 = 0.01;
+    const AF_MIN_VALUE: f32 = 0.001;
     const VEP_CONSEQUENCE_TAG: &str = "vepConsequence";
     const VEP_BIOTYPE: &str = "vepBIOTYPE";
     const RESCUE_TAG: &str = "RESCUE";
@@ -275,7 +280,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             // Check only rare variants
             // Gets the first value out, multiallelics are split
-            let af_info_value = get_tag_value_from_info(&info, &vcf_header, AF_TAG);
+            let af_info_value = get_tag_value_from_info(&info, &vcf_header, AF_TAG).unwrap();
 
             // The expect_value function should probably be handled as .expect(custom error given tag) instead
             let mut af_info_array = expect_value(af_info_value.as_f32_array(), AF_TAG);
@@ -287,7 +292,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             // Check if record is a PTV in VEP
             let vep_consequence_value =
-                get_tag_value_from_info(&info, &vcf_header, VEP_CONSEQUENCE_TAG);
+                get_tag_value_from_info(&info, &vcf_header, VEP_CONSEQUENCE_TAG).unwrap();
             let vep_consequence_array =
                 expect_value(vep_consequence_value.as_string_array(), VEP_CONSEQUENCE_TAG);
 
@@ -306,7 +311,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
 
             // Make sure the variant is protein coding, otherwise there was never anything ran on them
-            let biotype_value = get_tag_value_from_info(&info, &vcf_header, VEP_BIOTYPE);
+            let biotype_value = get_tag_value_from_info(&info, &vcf_header, VEP_BIOTYPE).unwrap();
             let biotype_array = expect_value(biotype_value.as_string_array(), VEP_BIOTYPE);
 
             let is_protein_coding: Vec<bool> = biotype_array
@@ -351,14 +356,21 @@ fn main() -> Result<(), Box<dyn Error>> {
             let possible_maternal_call = (maternal_call > 0) || (!is_phased && (paternal_call > 0));
 
             // println!(
-            //     "{}\t{}",
+            //     "{}\t{}\t{}",
+            //     row.id,
             //     record.reference_sequence_name(),
             //     record.variant_start().unwrap()?
             // );
 
             // Check RR PTVs
             let rescue_value = get_tag_value_from_info(&info, &vcf_header, RESCUE_TAG);
-            let rescue_array = expect_value(rescue_value.as_string_array(), RESCUE_TAG);
+            if rescue_value.is_none() {
+                continue;
+            }
+            let rescue_value_unwrapped = rescue_value.unwrap();
+            let rescue_array_wrapped = rescue_value_unwrapped.as_string_array();
+
+            let rescue_array = expect_value(rescue_array_wrapped, RESCUE_TAG);
             let rescues: Vec<_> = rescue_array
                 .into_iter()
                 .map(|rescue| match rescue {
@@ -372,7 +384,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 })
                 .collect();
 
-            let ptv_value = get_tag_value_from_info(&info, &vcf_header, PTV_TAG);
+            let ptv_value = get_tag_value_from_info(&info, &vcf_header, PTV_TAG).unwrap();
             let ptv_array = expect_value(ptv_value.as_string_array(), PTV_TAG);
             let ptvs: Vec<_> = ptv_array
                 .into_iter()
@@ -388,7 +400,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .collect();
 
             // Find genes corresponding to PTV notations
-            let gene_value = get_tag_value_from_info(&info, &vcf_header, VEP_GENE_SYMBOL);
+            let gene_value = get_tag_value_from_info(&info, &vcf_header, VEP_GENE_SYMBOL).unwrap();
             let gene_array = expect_value(gene_value.as_string_array(), VEP_GENE_SYMBOL);
 
             let genes: Vec<_> = gene_array
