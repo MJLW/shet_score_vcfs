@@ -439,8 +439,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                 }
 
-                let paternal_affected = !paternal_rescued || paternal_ptv;
-                let maternal_affected = !maternal_rescued || maternal_ptv;
+                let paternal_affected =
+                    possible_paternal_call && (!paternal_rescued || paternal_ptv);
+                let maternal_affected =
+                    possible_maternal_call && (!maternal_rescued || maternal_ptv);
 
                 if !paternal_affected && !maternal_affected {
                     continue;
