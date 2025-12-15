@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::io::BufWriter;
 use std::iter::zip;
 use std::{error::Error, fs::File, io::BufReader, path::Path};
@@ -71,9 +72,6 @@ struct Output {
 pub trait InfoValue {
     fn as_f32(&self) -> Result<f32, Box<dyn Error>>;
     fn as_string(&self) -> Result<Cow<'_, str>, Box<dyn Error>>;
-    fn as_i32_array<'a>(
-        &'a self,
-    ) -> Option<Box<dyn Iterator<Item = Result<Option<i32>, std::io::Error>> + 'a>>;
 
     fn as_f32_array<'a>(
         &'a self,
@@ -102,18 +100,6 @@ impl InfoValue for Value<'_> {
             _ => {
                 Err("Could not parse tag to value. It does not match the expected encoding or is unexpectedly missing.".into())
             }
-        }
-    }
-
-    fn as_i32_array<'a>(
-        &'a self,
-    ) -> Option<Box<dyn Iterator<Item = Result<Option<i32>, std::io::Error>> + 'a>> {
-        match self {
-            Value::Array(array_value) => match array_value {
-                Array::Integer(integer_values) => Some(Box::new(integer_values.iter())),
-                _ => None,
-            },
-            _ => None,
         }
     }
 
@@ -262,6 +248,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 
     let shet_scores = read_shet(&args.shet_scores)?;
+    let mut shet_hash_scores = HashMap::new();
+    shet_scores.iter().for_each(|shet| {
+        shet_hash_scores.insert(shet.gene.as_str(), shet);
+    });
 
     let vcf_files = read_input(&args.vcfs_file)?;
 
@@ -460,14 +450,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
 
             for (gene, haplotypes) in zip(affected_genes, affected_haplotypes) {
-                let shet_search = shet_scores.iter().find(|shet| shet.gene == gene);
+                let shet_value = shet_hash_scores.get(gene.as_str());
 
-                if shet_search.is_none() {
+                if shet_value.is_none() {
                     warn!("Could not find SHET score for gene {}.", gene);
                     continue;
                 }
 
-                let matched_shet = shet_search.unwrap();
+                let matched_shet = shet_value.unwrap();
 
                 if haplotypes.0 {
                     paternal += matched_shet.s_het_drift;
