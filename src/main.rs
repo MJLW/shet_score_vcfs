@@ -281,12 +281,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
 
             // Check if record is a PTV in VEP
-            let vep_consequence_value =
+            let consequence_value =
                 get_tag_value_from_info(&info, &vcf_header, VEP_CONSEQUENCE_TAG).unwrap();
-            let vep_consequence_array =
-                expect_value(vep_consequence_value.as_string_array(), VEP_CONSEQUENCE_TAG);
+            let consequence_array_iter =
+                expect_value(consequence_value.as_string_array(), VEP_CONSEQUENCE_TAG);
 
-            let is_ptv: Vec<bool> = vep_consequence_array
+            let is_ptv: Vec<bool> = consequence_array_iter
                 .into_iter()
                 .map(|consequence| match consequence {
                     Ok(Some(csq)) => csq.split('&').any(|c| ptv_csq_re.is_match(c)),
@@ -302,9 +302,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             // Make sure the variant is protein coding, otherwise there was never anything ran on them
             let biotype_value = get_tag_value_from_info(&info, &vcf_header, VEP_BIOTYPE).unwrap();
-            let biotype_array = expect_value(biotype_value.as_string_array(), VEP_BIOTYPE);
+            let biotype_array_iter = expect_value(biotype_value.as_string_array(), VEP_BIOTYPE);
 
-            let is_protein_coding: Vec<bool> = biotype_array
+            let is_protein_coding: Vec<bool> = biotype_array_iter
                 .into_iter()
                 .map(|biotype| match biotype {
                     Ok(Some(biotype)) => biotype == "protein_coding",
@@ -342,32 +342,27 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .expect("Could not find maternal haplotype call");
 
             // If unphased, then heterozygous variants were applied to both haplotypes in RescueRanger
-            let possible_paternal_call = (paternal_call > 0) || (!is_phased && (maternal_call > 0));
-            let possible_maternal_call = (maternal_call > 0) || (!is_phased && (paternal_call > 0));
-
-            // println!(
-            //     "{}\t{}\t{}",
-            //     row.id,
-            //     record.reference_sequence_name(),
-            //     record.variant_start().unwrap()?
-            // );
+            let possible_paternal_call = (is_phased && paternal_call > 0)
+                || (!is_phased && (maternal_call > 0 || paternal_call > 0));
+            let possible_maternal_call = (is_phased && maternal_call > 0)
+                || (!is_phased && (maternal_call > 0 || paternal_call > 0));
 
             // Check RR PTVs
             let rescue_value = get_tag_value_from_info(&info, &vcf_header, RESCUE_TAG);
             if rescue_value.is_none() {
                 continue;
             }
-            let rescue_value_unwrapped = rescue_value.unwrap();
-            let rescue_array_wrapped = rescue_value_unwrapped.as_string_array();
 
-            let rescue_array = expect_value(rescue_array_wrapped, RESCUE_TAG);
-            let rescues: Vec<_> = rescue_array
+            let rescue_value_unwrapped = rescue_value.unwrap();
+            let rescue_array_iter_wrapped = rescue_value_unwrapped.as_string_array();
+
+            let rescue_array_iter = expect_value(rescue_array_iter_wrapped, RESCUE_TAG);
+            let rescues: Vec<_> = rescue_array_iter
                 .into_iter()
                 .map(|rescue| match rescue {
                     Ok(Some(r)) => {
-                        let rescue_haplotypes = r.split_at(1);
-                        let paternal = rescue_haplotypes.0.parse::<i64>().unwrap_or(0);
-                        let maternal = rescue_haplotypes.1.parse::<i64>().unwrap_or(0);
+                        let paternal = (r.as_bytes()[0] as char).to_digit(10).unwrap_or(0);
+                        let maternal = (r.as_bytes()[2] as char).to_digit(10).unwrap_or(0);
                         Some((paternal, maternal))
                     }
                     _ => None,
@@ -375,14 +370,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .collect();
 
             let ptv_value = get_tag_value_from_info(&info, &vcf_header, PTV_TAG).unwrap();
-            let ptv_array = expect_value(ptv_value.as_string_array(), PTV_TAG);
-            let ptvs: Vec<_> = ptv_array
+            let ptv_array_iter = expect_value(ptv_value.as_string_array(), PTV_TAG);
+            let ptvs: Vec<_> = ptv_array_iter
                 .into_iter()
                 .map(|ptv| match ptv {
                     Ok(Some(r)) => {
-                        let ptv_haplotypes = r.split_at(1);
-                        let paternal = ptv_haplotypes.0.parse::<i64>().unwrap_or(0);
-                        let maternal = ptv_haplotypes.1.parse::<i64>().unwrap_or(0);
+                        let paternal = (r.as_bytes()[0] as char).to_digit(10).unwrap_or(0);
+                        let maternal = (r.as_bytes()[2] as char).to_digit(10).unwrap_or(0);
                         Some((paternal, maternal))
                     }
                     _ => None,
@@ -391,9 +385,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             // Find genes corresponding to PTV notations
             let gene_value = get_tag_value_from_info(&info, &vcf_header, VEP_GENE_SYMBOL).unwrap();
-            let gene_array = expect_value(gene_value.as_string_array(), VEP_GENE_SYMBOL);
+            let gene_array_iter = expect_value(gene_value.as_string_array(), VEP_GENE_SYMBOL);
 
-            let genes: Vec<_> = gene_array
+            let genes: Vec<Option<String>> = gene_array_iter
                 .into_iter()
                 .map(|gene| match gene {
                     Ok(Some(gene)) => Some(gene),
@@ -415,8 +409,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let mut maternal_rescued = false;
                 if let Some(rescue) = rescues.get(i) {
                     if let Some(rescue_tuple) = rescue {
-                        paternal_rescued = rescue_tuple.0 > 0 && possible_paternal_call;
-                        maternal_rescued = rescue_tuple.1 > 0 && possible_maternal_call;
+                        paternal_rescued = rescue_tuple.0 > 0;
+                        maternal_rescued = rescue_tuple.1 > 0;
                     }
                 }
 
@@ -424,8 +418,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let mut maternal_ptv = false;
                 if let Some(ptv) = ptvs.get(i) {
                     if let Some(ptv_tuple) = ptv {
-                        paternal_ptv = ptv_tuple.0 > 0 && possible_paternal_call;
-                        maternal_ptv = ptv_tuple.1 > 0 && possible_maternal_call;
+                        paternal_ptv = ptv_tuple.0 > 0;
+                        maternal_ptv = ptv_tuple.1 > 0;
                     }
                 }
 
@@ -440,7 +434,22 @@ fn main() -> Result<(), Box<dyn Error>> {
 
                 if let Some(gene) = genes.get(i) {
                     let gene_name = gene.clone().unwrap();
-                    if affected_genes.contains(&gene_name) {
+
+                    if let Some(stored_gene) = affected_genes
+                        .iter()
+                        .enumerate()
+                        .find(|(_, affected_gene)| gene_name == **affected_gene)
+                    {
+                        let gene_index = stored_gene.0;
+                        let haplotypes = affected_haplotypes.get(gene_index).unwrap();
+                        if paternal_affected > haplotypes.0 || maternal_affected > haplotypes.1 {
+                            affected_haplotypes.remove(gene_index);
+
+                            // Two calls possible, so given the difference they must both be affected now
+                            affected_haplotypes.push((true, true));
+                            continue;
+                        }
+
                         continue;
                     }
 
@@ -466,6 +475,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                 if haplotypes.1 {
                     maternal += matched_shet.s_het_drift;
                 }
+
+                println!(
+                    "{}:{}\t{}\t{}|{}",
+                    record.reference_sequence_name(),
+                    record.variant_start().unwrap()?,
+                    matched_shet.s_het_drift,
+                    paternal,
+                    maternal
+                );
             }
         }
 
